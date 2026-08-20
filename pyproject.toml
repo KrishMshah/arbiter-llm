@@ -1,0 +1,65 @@
+[project]
+name = "arbiter-llm"
+version = "0.1.0"
+description = "ARBITER: Adversarial Review By Independent Three-model Evaluator & Resolver"
+requires-python = ">=3.10"
+
+dependencies = [
+    # Core / schemas / data (Phase 1)
+    "pydantic>=2",
+    "pandas",
+    "pyarrow",
+    "python-dotenv",
+
+    # Pipeline orchestration (Phase 1)
+    "langgraph",
+
+    # LLM APIs (Phase 2)
+    "openai",
+    "anthropic",
+    "ollama",
+    "instructor",
+
+    # Storage (Phase 2)
+    "sqlalchemy",
+    "psycopg2-binary",
+    "chromadb",
+
+    # ML arbitration (Phase 2-4)
+    "xgboost",
+    "lightgbm",
+    "scikit-learn",
+    "scipy",
+
+    # Analytics + dashboards (Phase 4)
+    "matplotlib",
+    "streamlit",
+
+    # API layer (Phase 5)
+    "fastapi",
+    "uvicorn[standard]",
+
+    # Report generation (Phase 5)
+    "jinja2",
+    "reportlab",
+
+    # Testing
+    "pytest",
+]
+
+[project.optional-dependencies]
+finetune = [
+    "torch",
+    "transformers",
+    "peft",
+    "bitsandbytes",
+    "accelerate",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
