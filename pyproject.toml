@@ -10,20 +10,37 @@ dependencies = [
     "pandas",
     "pyarrow",
     "python-dotenv",
+    "nltk",
+    "tiktoken",
 
     # Pipeline orchestration (Phase 1)
-    "langgraph",
+    # >=1.2: verified current (Aug 2026). Code uses the modern START-based
+    # entry point (graph.add_edge(START, ...)), not the older set_entry_point()
+    # style -- an unpinned install could resolve to something that predates
+    # or breaks that API.
+    "langgraph>=1.2",
 
     # LLM APIs (Phase 2)
-    "openai",
-    "anthropic",
+    # >=1.0: pre-1.0 openai SDK used a completely different shape
+    # (openai.ChatCompletion.create) than the current client class.
+    "openai>=1.0",
+    # >=0.40: anthropic SDK is still 0.x-versioned but the client API
+    # (Anthropic(), .messages.create()) has been stable since its v0.3.0
+    # rewrite -- floor just excludes old pre-rewrite versions.
+    "anthropic>=0.40",
     "ollama",
-    "instructor",
+    # >=1.0: pre-1.0 instructor used a patching-based API, not the current
+    # from_provider()/from_openai() client pattern our critics.py will use.
+    "instructor>=1.0",
 
     # Storage (Phase 2)
-    "sqlalchemy",
+    # >=2.0: 1.x vs 2.x SQLAlchemy have real API differences
+    # (declarative_base import path, session/query patterns changed).
+    "sqlalchemy>=2.0",
     "psycopg2-binary",
-    "chromadb",
+    # >=1.0: pre-1.0 chromadb versions have known irreversible DB migration
+    # differences per Chroma's own docs -- avoid crossing that boundary.
+    "chromadb>=1.0",
 
     # ML arbitration (Phase 2-4)
     "xgboost",
@@ -35,7 +52,7 @@ dependencies = [
     "matplotlib",
     "streamlit",
 
-    # API layer (Phase 5)
+    # API layer (Phase 4)
     "fastapi",
     "uvicorn[standard]",
 
@@ -44,7 +61,9 @@ dependencies = [
     "reportlab",
 
     # Testing
-    "pytest",
+    # >=8.0: matches the pytest version already verified passing all 28
+    # Phase 1 tests.
+    "pytest>=8.0",
 ]
 
 [project.optional-dependencies]

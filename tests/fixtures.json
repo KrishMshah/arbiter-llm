@@ -1,0 +1,25 @@
+[
+  {"id": "fixture_01", "task_type": "factual_qa", "output_text": "The Eiffel Tower was completed in 1889. It was designed by Gustave Eiffel's engineering company for the World's Fair."},
+  {"id": "fixture_02", "task_type": "factual_qa", "output_text": "Photosynthesis is the process by which plants convert sunlight into chemical energy. This occurs primarily in the chloroplasts of plant cells."},
+  {"id": "fixture_03", "task_type": "factual_qa", "output_text": "Dr. Smith published his findings in a U.S. medical journal in 2021. The study examined over 500 patients across three hospitals."},
+  {"id": "fixture_04", "task_type": "factual_qa", "output_text": "Mount Everest is the tallest mountain above sea level, standing at 8,849 meters. It is located on the border between Nepal and Tibet."},
+  {"id": "fixture_05", "task_type": "factual_qa", "output_text": "The mitochondria is the powerhouse of the cell. It generates ATP through cellular respiration."},
+
+  {"id": "fixture_06", "task_type": "summarisation", "output_text": "The company reported record profits this quarter, driven by strong overseas sales. Revenue grew 15% year-over-year. Executives credited the growth to a new product line launched in March. The CEO expressed optimism about continued expansion into Asian markets."},
+  {"id": "fixture_07", "task_type": "summarisation", "output_text": "Researchers studied sleep patterns in over 1,000 participants. They found that irregular sleep schedules were linked to higher rates of anxiety. The study recommends consistent bedtimes for better mental health outcomes."},
+  {"id": "fixture_08", "task_type": "summarisation", "output_text": "The novel follows a young detective solving a decades-old murder case. Set in 1920s Chicago, it explores themes of corruption and loyalty. Critics have praised its atmospheric prose and unpredictable twists."},
+  {"id": "fixture_09", "task_type": "summarisation", "output_text": "Climate scientists warn that global temperatures could rise by 2 degrees Celsius by 2050. This would significantly increase the frequency of extreme weather events. Immediate emissions reductions are recommended to avoid the worst outcomes."},
+  {"id": "fixture_10", "task_type": "summarisation", "output_text": "The city council approved a new public transit expansion plan. It includes three new subway lines and 50 additional bus routes. Construction is expected to begin next spring and take four years to complete."},
+
+  {"id": "fixture_11", "task_type": "reasoning", "output_text": "To solve for x in the equation 2x + 5 = 15, first subtract 5 from both sides to get 2x = 10. Then divide both sides by 2, giving x = 5."},
+  {"id": "fixture_12", "task_type": "reasoning", "output_text": "If all birds can fly and penguins are birds, then penguins can fly. Therefore, this argument is logically valid but factually incorrect, since penguins cannot actually fly."},
+  {"id": "fixture_13", "task_type": "reasoning", "output_text": "The function checks if a number is prime by testing divisibility up to its square root. This is more efficient than checking all the way up to the number itself, since factors pair up around the square root."},
+  {"id": "fixture_14", "task_type": "reasoning", "output_text": "Given three switches and one light bulb in another room, you can determine which switch controls the bulb by turning one on for a few minutes, then off, then turning a second one on before checking the room."},
+  {"id": "fixture_15", "task_type": "reasoning", "output_text": "A train leaves station A at 60 mph and another leaves station B at 40 mph, heading toward each other. If the stations are 200 miles apart, they will meet after 2 hours, since their combined speed is 100 mph."},
+
+  {"id": "fixture_16", "task_type": "creative", "output_text": "The old lighthouse keeper watched the storm roll in from the west. He had seen a thousand storms before, but this one felt different, heavier somehow, as if the sky itself was holding its breath."},
+  {"id": "fixture_17", "task_type": "creative", "output_text": "In the kingdom of Veyloria, dragons were not feared but revered as guardians of the mountain passes. Every villager knew the old songs, and every child learned to whistle the dragon's call before they could walk."},
+  {"id": "fixture_18", "task_type": "creative", "output_text": "She poured two cups of coffee, one for herself and one for the empty chair across the table, a habit she never quite explained to anyone who asked."},
+  {"id": "fixture_19", "task_type": "creative", "output_text": "The robot's circuits hummed softly as it processed the child's question for the first time: what does it mean to dream? It had no answer, but it found the asking beautiful."},
+  {"id": "fixture_20", "task_type": "creative", "output_text": "Autumn arrived overnight, the way it always did in the valley, painting the maples red before anyone had finished packing away summer."}
+]
