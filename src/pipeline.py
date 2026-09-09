@@ -1,48 +1,14 @@
 """
 src/pipeline.py
 
-LangGraph state machine wiring together routing, critics, disagreement
-detection, ML arbitration, the adjudicator, and hallucination tracing.
-
-Cost tracking lives here (not in critics.py/adjudicator.py) — centralizing
-it keeps those files clean and means every dollar in the system is
-accounted for in exactly one place. Token counts use tiktoken's o200k_base
-encoding (GPT-4o's real tokenizer) as a universal approximator — exact for
-Critic A and the adjudicator, an estimate for Claude Haiku and Llama since
-no offline tokenizer exists for those without heavy extra dependencies.
-
-Pricing verified via web search, current as of Aug 2026 — NOT the project
-doc's numbers, which were stale for Claude Haiku (doc said ~$0.00025/1K
-input, real rate is $0.0008/1K input + $0.004/1K output).
-
-Cost estimation is skipped entirely in MOCK_MODE — no real API call was
-made, so the true cost is $0, not "what it would have cost."
-
-Phase 2 TODO (this file will need real work, not just a critics.py swap):
-  - Critic failure handling: PARTIALLY done. dispatch_critics_node now
-    catches any exception from critic.evaluate() and marks that critic
-    failed (see critics.py's make_failed_critique + schemas.py's
-    CritiqueOutput.critic_failed) instead of crashing — disagreement.py
-    filters failed critics out of every comparison. STILL MISSING: the
-    30-second timeout itself (nothing times out yet — mocks/no real calls
-    exist to time out), and the "abort with error if 2+ critics fail"
-    guardrail — right now the pipeline always continues regardless of how
-    many critics failed, which is fine for 1 failure but wrong for 2+.
-    Enforcing that abort needs ArbitrationState.error to distinguish
-    "reject this request" from "degrade and continue" — it's currently one
-    generic string, which isn't enough for that distinction.
-  - Retry-once + simplified-fallback-prompt on critic schema validation
-    failure — not applicable while critics are mocked
-  - Cost guardrails: per-request $0.05 cap and daily $5 cap are computed
-    here but NOT enforced/rejected yet — just tracked
-  - Wrap run_pipeline() as POST /v1/arbitrate in FastAPI (Phase 4 per
-    folder structure doc)
+LangGraph state machine: routing -> critics -> disagreement -> ML
+arbitration -> adjudicator (if escalated) -> hallucination trace -> verdict.
 """
 
 import time
 from typing import Optional, TypedDict
 
-from src.config import MOCK_MODE
+from src.config import MOCK_CRITIC_A, MOCK_CRITIC_B, MOCK_CRITIC_C
 from src.schemas import (
     BenchmarkItem, RoutingDecision, CritiqueOutput, DisagreementMatrix,
     MLFeatures, MLArbitratorOutput, HallucinationTrace, Verdict, ArbitrationResult,
@@ -54,59 +20,52 @@ from src.arbitrator import run_arbitrator
 from src.adjudicator import run_adjudicator, retrieve_evidence
 from src.hallucination import trace_hallucinations
 
-from langgraph.graph import StateGraph, START, END
+from langgraph.graph import StateGraph, START, END # type: ignore
 
-
-# ============================================================================
-# Cost tracking — verified rates, Aug 2026. Llama/stub are $0 by design (local).
-# ============================================================================
 
 PRICING: dict[str, dict[str, float]] = {
     "gpt-4o-mini": {"input_per_1k": 0.00015, "output_per_1k": 0.00060},
-    "claude-haiku-3.5": {"input_per_1k": 0.00080, "output_per_1k": 0.00400},
+    "claude-haiku-4-5": {"input_per_1k": 0.00100, "output_per_1k": 0.00500},
     "llama3.2:3b": {"input_per_1k": 0.0, "output_per_1k": 0.0},
-    "gpt-4o": {"input_per_1k": 0.00250, "output_per_1k": 0.01000},
+    "gpt-5.6-terra": {"input_per_1k": 0.00200, "output_per_1k": 0.01200},
     "stub": {"input_per_1k": 0.0, "output_per_1k": 0.0},
+}
+
+CRITIC_MOCK_FLAGS = {
+    "critic_a": MOCK_CRITIC_A,
+    "critic_b": MOCK_CRITIC_B,
+    "critic_c": MOCK_CRITIC_C,
 }
 
 try:
     import tiktoken
     _ENCODER = tiktoken.get_encoding("o200k_base")
 except Exception:
-    # Covers tiktoken not being installed AND get_encoding()'s first-use
-    # network fetch failing (it downloads the BPE file from
-    # openaipublic.blob.core.windows.net on first call, then caches it —
-    # a network hiccup, firewall, or offline machine shouldn't break
-    # importing this module. Falls back to the crude len(text)//4 estimate.
-    _ENCODER = None
+    _ENCODER = None  # offline/no network on first use — fall back to len//4
 
 
 def count_tokens(text: str) -> int:
     if _ENCODER is not None:
         return len(_ENCODER.encode(text))
-    return max(1, len(text) // 4)  # crude fallback if tiktoken isn't installed
+    return max(1, len(text) // 4)
 
 
-def estimate_cost(model_used: str, input_text: str, output_text: str) -> float:
-    if MOCK_MODE:
-        return 0.0  # no real API call happened — nothing was actually billed
+def estimate_cost(model_used: str, input_text: str, output_text: str, is_mock: bool = False) -> float:
+    if is_mock:
+        return 0.0
     rates = PRICING.get(model_used)
     if rates is None:
-        return 0.0  # unknown model — don't silently guess a price
+        return 0.0
     input_cost = (count_tokens(input_text) / 1000) * rates["input_per_1k"]
     output_cost = (count_tokens(output_text) / 1000) * rates["output_per_1k"]
     return input_cost + output_cost
 
 
-# ============================================================================
-# Pipeline state
-# ============================================================================
-
 class ArbitrationState(TypedDict):
     input_id: str
     original_output: str
     task_type: str
-    benchmark_item: Optional[BenchmarkItem]  # enables ground-truth-aware disagreement resolution
+    benchmark_item: Optional[BenchmarkItem]
 
     routing_decision: Optional[RoutingDecision]
 
@@ -132,10 +91,6 @@ class ArbitrationState(TypedDict):
     error: Optional[str]
 
 
-# ============================================================================
-# Nodes
-# ============================================================================
-
 def parse_input(state: ArbitrationState) -> dict:
     if not state.get("original_output", "").strip():
         return {"error": "original_output is empty"}
@@ -157,14 +112,11 @@ def dispatch_critics_node(state: ArbitrationState) -> dict:
         try:
             critique = critic.evaluate(output_text, dimensions)
         except Exception as e:
-            # One critic failing shouldn't crash the whole run — mark it and
-            # continue. Whether 2+ failures should abort the pipeline entirely
-            # is still open (Phase 2 TODO below) — this just makes sure a
-            # single failure degrades gracefully instead of throwing.
             critique = make_failed_critique(critic_id, critic.model_used, str(e))
         critiques[critic_id] = critique
         cost_breakdown[critic_id] = estimate_cost(
             critic.model_used, input_text=output_text, output_text=critique.reasoning,
+            is_mock=CRITIC_MOCK_FLAGS.get(critic_id, False),
         )
 
     return {
@@ -204,9 +156,10 @@ def run_adjudicator_node(state: ArbitrationState) -> dict:
 
     cost_breakdown = dict(state.get("cost_breakdown", {}))
     cost_breakdown["adjudicator"] = estimate_cost(
-        "gpt-4o",
+        "gpt-5.6-terra",
         input_text=state["original_output"] + " ".join(evidence),
         output_text=verdict.adjudicator_reasoning or "",
+        is_mock=True,  # run_adjudicator() is still a Phase 1 stub
     )
 
     return {
@@ -224,9 +177,6 @@ def trace_hallucinations_node(state: ArbitrationState) -> dict:
 
 
 def _ml_only_verdict(ml_output: MLArbitratorOutput, critiques: list[CritiqueOutput]) -> Verdict:
-    """Used when the ML arbitrator's confidence was high enough that the
-    adjudicator never ran (the fast path) — verdict has to come from
-    somewhere, so it's built directly from the ML prediction."""
     all_issues = [i for c in critiques for i in c.issues]
     confidence_1_5 = max(1, min(5, round(1 + ml_output.arbitration_confidence * 4)))
     quality_1_10 = max(1, min(10, round(ml_output.predicted_quality_score)))
@@ -258,10 +208,6 @@ def assemble_verdict_node(state: ArbitrationState) -> dict:
         "latency_ms": latency_ms,
     }
 
-
-# ============================================================================
-# Graph construction
-# ============================================================================
 
 def build_graph():
     graph = StateGraph(ArbitrationState)
@@ -309,8 +255,6 @@ def run_pipeline(
     task_type: str,
     benchmark_item: Optional[BenchmarkItem] = None,
 ) -> ArbitrationResult:
-    """Direct call — no FastAPI yet (that's Phase 4). This IS the
-    POST /v1/arbitrate behavior for now."""
     initial_state: ArbitrationState = {
         "input_id": input_id,
         "original_output": original_output,

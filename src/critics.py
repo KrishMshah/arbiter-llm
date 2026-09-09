@@ -216,7 +216,7 @@ class CriticB(BaseCritic):
         result = _get_anthropic_client().messages.create(
             model=self.model_used,
             response_model=CritiqueResponse,
-            max_tokens=1024,  # required by Anthropic's API, unlike OpenAI
+            max_tokens=2048,  # required by Anthropic's API, unlike OpenAI
             messages=[{"role": "user", "content": build_prompt(output_text, dimensions)}],
             temperature=0.2,
         )
@@ -260,4 +260,3 @@ CRITICS: dict[str, BaseCritic] = {
     "critic_b": CriticB(),
     "critic_c": CriticC(),
 }
-
