@@ -1,8 +1,8 @@
 """
 src/critics.py
 
-BaseCritic + 3 critic implementations. Each scores all dimensions
-routing.py selects. Phase 2: CriticC is real (Ollama), A/B still mocked.
+BaseCritic + 3 critic implementations. Phase 2: all three real.
+CriticC = Ollama, CriticA = OpenAI, CriticB = Anthropic, via instructor.
 """
 
 import hashlib
@@ -10,9 +10,21 @@ import json
 import random
 from abc import ABC, abstractmethod
 
+import instructor
 import ollama  # type: ignore
+from anthropic import Anthropic
+from openai import OpenAI
+from pydantic import BaseModel
 
-from src.config import MOCK_CRITIC_A, MOCK_CRITIC_B, MOCK_CRITIC_C, OLLAMA_BASE_URL, OLLAMA_MODEL
+from src.config import (
+    ANTHROPIC_API_KEY,
+    MOCK_CRITIC_A,
+    MOCK_CRITIC_B,
+    MOCK_CRITIC_C,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    OPENAI_API_KEY,
+)
 from src.schemas import CritiqueOutput, Issue, Severity
 
 
@@ -95,6 +107,49 @@ def build_critique_schema(dimensions: list[str]) -> dict:
     }
 
 
+class CritiqueResponse(BaseModel):
+    """What instructor asks GPT-4o-mini / Claude Haiku to return."""
+    dimension_scores: dict[str, int]
+    issues: list[Issue]
+    self_confidence: int
+    reasoning: str
+
+
+_openai_client = None
+_anthropic_client = None
+
+
+def _get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = instructor.from_openai(OpenAI(api_key=OPENAI_API_KEY))
+    return _openai_client
+
+
+def _get_anthropic_client():
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = instructor.from_anthropic(Anthropic(api_key=ANTHROPIC_API_KEY))
+    return _anthropic_client
+
+
+def _to_critique_output(critic_id: str, model_used: str, result: CritiqueResponse, dimensions: list[str]) -> CritiqueOutput:
+    # instructor doesn't schema-lock keys like Ollama's format= does — filter defensively
+    extra = set(result.dimension_scores) - set(dimensions)
+    if extra:
+        print(f"[{critic_id}] warning: dropped unexpected dimensions {extra}")
+
+    return CritiqueOutput(
+        critic_id=critic_id,
+        model_used=model_used,
+        dimension_scores={d: s for d, s in result.dimension_scores.items() if d in dimensions},
+        issues=[i for i in result.issues if i.dimension in dimensions],
+        self_confidence=result.self_confidence,
+        reasoning=result.reasoning,
+        dimensions_evaluated=dimensions,
+    )
+
+
 class BaseCritic(ABC):
     critic_id: str
     model_used: str
@@ -140,17 +195,32 @@ class CriticA(BaseCritic):
     def evaluate(self, output_text: str, dimensions: list[str]) -> CritiqueOutput:
         if MOCK_CRITIC_A:
             return self._mock_evaluate(output_text, dimensions)
-        raise NotImplementedError("Real GPT-4o-mini call — next file")
+
+        result = _get_openai_client().chat.completions.create(
+            model=self.model_used,
+            response_model=CritiqueResponse,
+            messages=[{"role": "user", "content": build_prompt(output_text, dimensions)}],
+            temperature=0.2,
+        )
+        return _to_critique_output(self.critic_id, self.model_used, result, dimensions)
 
 
 class CriticB(BaseCritic):
     critic_id = "critic_b"
-    model_used = "claude-haiku-4.5"
+    model_used = "claude-haiku-4-5"
 
     def evaluate(self, output_text: str, dimensions: list[str]) -> CritiqueOutput:
         if MOCK_CRITIC_B:
             return self._mock_evaluate(output_text, dimensions)
-        raise NotImplementedError("Real Claude Haiku call — next file")
+
+        result = _get_anthropic_client().messages.create(
+            model=self.model_used,
+            response_model=CritiqueResponse,
+            max_tokens=1024,  # required by Anthropic's API, unlike OpenAI
+            messages=[{"role": "user", "content": build_prompt(output_text, dimensions)}],
+            temperature=0.2,
+        )
+        return _to_critique_output(self.critic_id, self.model_used, result, dimensions)
 
 
 class CriticC(BaseCritic):
@@ -190,3 +260,4 @@ CRITICS: dict[str, BaseCritic] = {
     "critic_b": CriticB(),
     "critic_c": CriticC(),
 }
+
