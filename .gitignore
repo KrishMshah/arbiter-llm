@@ -8,7 +8,9 @@ __pycache__/
 
 benchmark_data/
 results/processed/
-results/runs/
+results/plots/
+models/
+*.pkl
 
 # Distribution / packaging
 .Python

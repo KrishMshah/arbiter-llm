@@ -51,6 +51,14 @@ def count_tokens(text: str) -> int:
 
 
 def estimate_cost(model_used: str, input_text: str, output_text: str, is_mock: bool = False) -> float:
+    """LEGACY: text-reconstruction cost estimate. Only still used for the
+    adjudicator path below, which is still a Phase 1 stub (is_mock=True,
+    so this never actually runs the arithmetic yet). Once the adjudicator
+    is wired for real (Step 5), it should switch to cost_from_tokens() the
+    same way the three critics did in the Phase 2b cost fix -- this
+    function has the same input/output-text-undercounting problem that
+    was found and fixed for critics.py, unfixed here because there's
+    nothing real calling it yet."""
     if is_mock:
         return 0.0
     rates = PRICING.get(model_used)
@@ -58,6 +66,26 @@ def estimate_cost(model_used: str, input_text: str, output_text: str, is_mock: b
         return 0.0
     input_cost = (count_tokens(input_text) / 1000) * rates["input_per_1k"]
     output_cost = (count_tokens(output_text) / 1000) * rates["output_per_1k"]
+    return input_cost + output_cost
+
+
+def cost_from_tokens(
+    model_used: str,
+    input_tokens: Optional[int],
+    output_tokens: Optional[int],
+    is_mock: bool = False,
+) -> float:
+    """Cost from real, API-reported token usage (Phase 2b cost fix) --
+    not estimated from text. None token counts (mock evaluation, or a
+    critic failure where no completion with usage ever came back) cost
+    0.0, not an estimate -- there's nothing real to charge for."""
+    if is_mock or input_tokens is None or output_tokens is None:
+        return 0.0
+    rates = PRICING.get(model_used)
+    if rates is None:
+        return 0.0
+    input_cost = (input_tokens / 1000) * rates["input_per_1k"]
+    output_cost = (output_tokens / 1000) * rates["output_per_1k"]
     return input_cost + output_cost
 
 
@@ -114,8 +142,10 @@ def dispatch_critics_node(state: ArbitrationState) -> dict:
         except Exception as e:
             critique = make_failed_critique(critic_id, critic.model_used, str(e))
         critiques[critic_id] = critique
-        cost_breakdown[critic_id] = estimate_cost(
-            critic.model_used, input_text=output_text, output_text=critique.reasoning,
+        cost_breakdown[critic_id] = cost_from_tokens(
+            critic.model_used,
+            input_tokens=critique.input_tokens,
+            output_tokens=critique.output_tokens,
             is_mock=CRITIC_MOCK_FLAGS.get(critic_id, False),
         )
 

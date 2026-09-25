@@ -3,6 +3,11 @@ src/critics.py
 
 BaseCritic + 3 critic implementations. Phase 2: all three real.
 CriticC = Ollama, CriticA = OpenAI, CriticB = Anthropic, via instructor.
+
+Phase 2b cost fix: CriticA/CriticB now use create_with_completion() instead
+of create(), capturing real API-reported token usage instead of estimating
+it from text after the fact. CriticC already had the raw Ollama response
+dict available -- just reading two more fields off it.
 """
 
 import hashlib
@@ -34,6 +39,10 @@ def _seeded_rng(output_text: str, critic_id: str, salt: str = "") -> random.Rand
 
 
 def make_failed_critique(critic_id: str, model_used: str, reason: str) -> CritiqueOutput:
+    # input_tokens/output_tokens intentionally omitted -- default to None,
+    # which pipeline.py's cost_from_tokens() treats as $0. A failure means
+    # we never got a completion with usage attached (or the call was never
+    # made), so there's nothing real to report.
     return CritiqueOutput(
         critic_id=critic_id,
         model_used=model_used,
@@ -57,6 +66,8 @@ DIMENSION_DESCRIPTIONS = {
 def build_prompt(output_text: str, dimensions: list[str]) -> str:
     dim_lines = "\n".join(f"- {d}: {DIMENSION_DESCRIPTIONS.get(d, d)}" for d in dimensions)
     return f"""You are an expert evaluator. Score the response on each dimension below, 1 (worst) to 5 (best). Flag specific issues with a quoted excerpt and severity.
+
+quoted_evidence must be copied character-for-character from the response below -- do not paraphrase, fix typos, or change capitalization or spacing. If the issue is that something is missing or absent from the response (not a problematic passage that exists in it), leave quoted_evidence as an empty string instead of describing the absence there.
 
 Dimensions:
 {dim_lines}
@@ -133,7 +144,14 @@ def _get_anthropic_client():
     return _anthropic_client
 
 
-def _to_critique_output(critic_id: str, model_used: str, result: CritiqueResponse, dimensions: list[str]) -> CritiqueOutput:
+def _to_critique_output(
+    critic_id: str,
+    model_used: str,
+    result: CritiqueResponse,
+    dimensions: list[str],
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+) -> CritiqueOutput:
     # instructor doesn't schema-lock keys like Ollama's format= does — filter defensively
     extra = set(result.dimension_scores) - set(dimensions)
     if extra:
@@ -147,6 +165,8 @@ def _to_critique_output(critic_id: str, model_used: str, result: CritiqueRespons
         self_confidence=result.self_confidence,
         reasoning=result.reasoning,
         dimensions_evaluated=dimensions,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
     )
 
 
@@ -185,6 +205,7 @@ class BaseCritic(ABC):
             self_confidence=confidence,
             reasoning=f"[MOCK] {self.critic_id} evaluated {', '.join(dimensions)} deterministically.",
             dimensions_evaluated=dimensions,
+            # input_tokens/output_tokens left as None -- no real call was made
         )
 
 
@@ -196,13 +217,17 @@ class CriticA(BaseCritic):
         if MOCK_CRITIC_A:
             return self._mock_evaluate(output_text, dimensions)
 
-        result = _get_openai_client().chat.completions.create(
+        result, completion = _get_openai_client().chat.completions.create_with_completion(
             model=self.model_used,
             response_model=CritiqueResponse,
             messages=[{"role": "user", "content": build_prompt(output_text, dimensions)}],
             temperature=0.2,
         )
-        return _to_critique_output(self.critic_id, self.model_used, result, dimensions)
+        return _to_critique_output(
+            self.critic_id, self.model_used, result, dimensions,
+            input_tokens=completion.usage.prompt_tokens,
+            output_tokens=completion.usage.completion_tokens,
+        )
 
 
 class CriticB(BaseCritic):
@@ -213,14 +238,18 @@ class CriticB(BaseCritic):
         if MOCK_CRITIC_B:
             return self._mock_evaluate(output_text, dimensions)
 
-        result = _get_anthropic_client().messages.create(
+        result, completion = _get_anthropic_client().messages.create_with_completion(
             model=self.model_used,
             response_model=CritiqueResponse,
             max_tokens=2048,  # required by Anthropic's API, unlike OpenAI
             messages=[{"role": "user", "content": build_prompt(output_text, dimensions)}],
             temperature=0.2,
         )
-        return _to_critique_output(self.critic_id, self.model_used, result, dimensions)
+        return _to_critique_output(
+            self.critic_id, self.model_used, result, dimensions,
+            input_tokens=completion.usage.input_tokens,
+            output_tokens=completion.usage.output_tokens,
+        )
 
 
 class CriticC(BaseCritic):
@@ -252,6 +281,10 @@ class CriticC(BaseCritic):
             self_confidence=parsed.get("self_confidence"),
             reasoning=parsed.get("reasoning", ""),
             dimensions_evaluated=dimensions,
+            # Free either way (local model, $0/$0 pricing) -- captured for
+            # observability/latency analysis, not because cost depends on it.
+            input_tokens=response.get("prompt_eval_count"),
+            output_tokens=response.get("eval_count"),
         )
 
 

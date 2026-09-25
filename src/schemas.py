@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field # pyright: ignore[reportMissin
 
 
 # ============================================================================
-# Benchmark schemas (Phase "2-in-doc" — done, tested against real data)
+# Benchmark schemas 
 # ============================================================================
 
 class TaskType(str, Enum):
@@ -89,7 +89,13 @@ class CritiqueOutput(BaseModel):
     dimensions_evaluated are empty and self_confidence is None in that case.
     Every other part of the system (disagreement detection, ML features)
     must filter these out before comparing critics against each other —
-    see disagreement.py."""
+    see disagreement.py.
+
+    input_tokens/output_tokens are real, API-reported usage (Phase 2b cost
+    fix) — not estimated from text. None for mock evaluations, and None
+    for failures where the call never returned a completion with usage
+    attached (e.g. a connection error) — cost_from_tokens() in pipeline.py
+    treats None as $0, not as an estimate."""
     critic_id: str
     model_used: str
     dimension_scores: dict[str, int]  # e.g. {"factual_accuracy": 4, "completeness": 3}
@@ -99,6 +105,8 @@ class CritiqueOutput(BaseModel):
     dimensions_evaluated: list[str]
     critic_failed: bool = False
     failure_reason: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
 
     model_config = ConfigDict(use_enum_values=True)
 
