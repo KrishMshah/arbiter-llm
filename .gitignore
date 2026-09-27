@@ -9,6 +9,7 @@ __pycache__/
 benchmark_data/
 results/processed/
 results/plots/
+results/analysis/
 models/
 *.pkl
 

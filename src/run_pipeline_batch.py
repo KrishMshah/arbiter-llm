@@ -1,18 +1,11 @@
 """
-src/run_real_sample.py
+src/run_pipeline_batch.py
 
-Runs run_sample_expansion.jsonl  Writes incrementally so a crash
-mid-run doesn't lose completed items, and is resumable: re-running this
-script skips whatever's already in RESULTS_PATH and only processes what's
-left, appending rather than overwriting.
-
-Safety net: if the same critic fails CONSECUTIVE_FAILURE_LIMIT times in a
-row (out-of-funds, revoked key, dead network -- pipeline.py's per-critic
-catch means we never see the raw exception, only a failed critique), the
-run halts immediately rather than silently burning through the rest of
-the sample recording failures. Same breaker for repeated whole-pipeline
-exceptions. Top up funds / fix whatever broke, re-run this exact script,
-it picks up where it stopped.
+Shared engine for running a benchmark sample through the full pipeline.
+All 3 critics real. Writes incrementally (crash-safe) and resumes
+automatically on re-run. Used by scripts/run_*.py -- each stage (original
+300, 480-item expansion, 130-pair Arena sample) calls this with its own
+paths, so the run logic itself lives in exactly one place.
 """
 
 import json
@@ -23,18 +16,9 @@ from src.config import MOCK_CRITIC_A, MOCK_CRITIC_B, MOCK_CRITIC_C, OLLAMA_MODEL
 from src.pipeline import run_pipeline
 from src.schemas import BenchmarkItem
 
-OUT_ROOT = Path("results/processed")
-SAMPLE_PATH = OUT_ROOT / "run_sample_expansion.jsonl"
-RESULTS_PATH = OUT_ROOT / "run_results_expansion.jsonl"  # separate file -- never touches the original 300's run_results.jsonl
-META_PATH = OUT_ROOT / "run_metadata_expansion.json"
-
 CONSECUTIVE_FAILURE_LIMIT = 3
 PROGRESS_INTERVAL = 10
 
-# Best-effort guess at what an out-of-funds error looks like -- haven't seen
-# the real message yet. First time this actually triggers, paste it and
-# this list gets tightened. The consecutive-failure count above is the real
-# safety net; this only makes the halt message more specific when it can.
 _BUDGET_EXHAUSTION_SIGNATURES = [
     "insufficient_quota", "insufficient quota", "credit balance",
     "billing_hard_limit", "billing hard limit", "exceeded your current quota",
@@ -47,30 +31,30 @@ def _looks_like_budget_exhaustion(reason: str) -> bool:
     return any(sig in reason_lower for sig in _BUDGET_EXHAUSTION_SIGNATURES)
 
 
-def load_sample() -> list[BenchmarkItem]:
-    with open(SAMPLE_PATH, encoding="utf-8") as f:
+def _load_sample(sample_path: Path) -> list[BenchmarkItem]:
+    with open(sample_path, encoding="utf-8") as f:
         return [BenchmarkItem(**json.loads(line)) for line in f]
 
 
-def load_completed_ids(path: Path) -> set[str]:
-    if not path.exists():
+def _load_completed_ids(results_path: Path) -> set[str]:
+    if not results_path.exists():
         return set()
-    with open(path, encoding="utf-8") as f:
+    with open(results_path, encoding="utf-8") as f:
         return {json.loads(line)["input_id"] for line in f if line.strip()}
 
 
-def main():
-    all_items = load_sample()
-    completed_ids = load_completed_ids(RESULTS_PATH)
+def run_batch(sample_path: Path, results_path: Path, meta_path: Path, stage_name: str):
+    all_items = _load_sample(sample_path)
+    completed_ids = _load_completed_ids(results_path)
     items = [item for item in all_items if item.item_id not in completed_ids]
 
     if completed_ids:
-        print(f"Resuming: {len(completed_ids)}/{len(all_items)} already done, {len(items)} remaining.")
+        print(f"[{stage_name}] Resuming: {len(completed_ids)}/{len(all_items)} already done, {len(items)} remaining.")
     else:
-        print(f"Fresh run: {len(all_items)} items through the full pipeline (all 3 critics real)...")
+        print(f"[{stage_name}] Fresh run: {len(all_items)} items through the full pipeline...")
 
     if not items:
-        print("Nothing left to do -- all items already completed.")
+        print(f"[{stage_name}] Nothing left to do -- all items already completed.")
         return
 
     n_ok, failures = 0, []
@@ -81,7 +65,7 @@ def main():
     start = time.time()
 
     mode = "a" if completed_ids else "w"
-    with open(RESULTS_PATH, mode, encoding="utf-8") as out:
+    with open(results_path, mode, encoding="utf-8") as out:
         for i, item in enumerate(items, 1):
             try:
                 result = run_pipeline(
@@ -91,7 +75,7 @@ def main():
                     benchmark_item=item,
                 )
                 out.write(json.dumps(result.model_dump()) + "\n")
-                out.flush()  # crash-safe: completed items are already on disk
+                out.flush()
                 n_ok += 1
                 consecutive_pipeline_exceptions = 0
 
@@ -116,7 +100,7 @@ def main():
 
             except Exception as e:
                 failures.append({"item_id": item.item_id, "error": str(e)})
-                print(f"[{i}/{len(items)}] FAILED {item.item_id}: {e}")
+                print(f"[{stage_name}] [{i}/{len(items)}] FAILED {item.item_id}: {e}")
                 consecutive_pipeline_exceptions += 1
                 if consecutive_pipeline_exceptions >= CONSECUTIVE_FAILURE_LIMIT:
                     halt_reason = f"whole pipeline raised {consecutive_pipeline_exceptions} times in a row. Last error: {e}"
@@ -125,22 +109,23 @@ def main():
             if i % PROGRESS_INTERVAL == 0 or i == len(items) or halted_early:
                 elapsed = time.time() - start
                 remaining = (elapsed / i) * (len(items) - i)
-                print(f"[{i}/{len(items)}] {elapsed:.0f}s elapsed, ~{remaining:.0f}s remaining "
-                    f"({len(completed_ids) + n_ok}/{len(all_items)} total done)")
+                print(f"[{stage_name}] [{i}/{len(items)}] {elapsed:.0f}s elapsed, ~{remaining:.0f}s remaining "
+                      f"({len(completed_ids) + n_ok}/{len(all_items)} total done)")
 
             if halted_early:
-                print(f"\nSTOPPED EARLY: {halt_reason}")
+                print(f"\n[{stage_name}] STOPPED EARLY: {halt_reason}")
                 print(f"{len(completed_ids) + n_ok}/{len(all_items)} total items completed and saved.")
-                print(f"Fix the API key/funds, then re-run this exact script -- it resumes automatically "
-                    f"from {RESULTS_PATH}, nothing already done is repeated.")
+                print(f"Fix the issue, then re-run this exact script -- it resumes automatically "
+                      f"from {results_path}, nothing already done is repeated.")
                 break
 
     meta = {
+        "stage": stage_name,
         "mock_critic_a": MOCK_CRITIC_A,
         "mock_critic_b": MOCK_CRITIC_B,
         "mock_critic_c": MOCK_CRITIC_C,
         "ollama_model": OLLAMA_MODEL,
-        "sample_source": str(SAMPLE_PATH),
+        "sample_source": str(sample_path),
         "total_items_in_sample": len(all_items),
         "completed_before_this_session": len(completed_ids),
         "succeeded_this_session": n_ok,
@@ -152,13 +137,9 @@ def main():
         "elapsed_seconds_this_session": round(time.time() - start, 1),
         "run_timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    with open(META_PATH, "w", encoding="utf-8") as f:
+    with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
     if not halted_early:
-        print(f"\nDone: {len(completed_ids) + n_ok}/{len(all_items)} total items completed -> {RESULTS_PATH}")
+        print(f"\n[{stage_name}] Done: {len(completed_ids) + n_ok}/{len(all_items)} total -> {results_path}")
     print(json.dumps({k: v for k, v in meta.items() if k != "failures_this_session"}, indent=2))
-
-
-if __name__ == "__main__":
-    main()

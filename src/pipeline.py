@@ -180,24 +180,30 @@ def should_escalate_to_gpt(state: ArbitrationState) -> str:
 def run_adjudicator_node(state: ArbitrationState) -> dict:
     critiques = [state["critique_a"], state["critique_b"], state["critique_c"]]
     evidence = retrieve_evidence(state["original_output"])
-    verdict = run_adjudicator(
-        state["original_output"], critiques, state["disagreement_matrix"], state["ml_arbitrator_output"],
-    )
-
     cost_breakdown = dict(state.get("cost_breakdown", {}))
-    cost_breakdown["adjudicator"] = estimate_cost(
-        "gpt-5.6-terra",
-        input_text=state["original_output"] + " ".join(evidence),
-        output_text=verdict.adjudicator_reasoning or "",
-        is_mock=True,  # run_adjudicator() is still a Phase 1 stub
-    )
 
-    return {
-        "retrieved_evidence": evidence,
-        "verdict": verdict,
-        "adjudicator_triggered": True,
-        "cost_breakdown": cost_breakdown,
-    }
+    try:
+        verdict, input_tokens, output_tokens = run_adjudicator(
+            state["original_output"], critiques, state["disagreement_matrix"], state["ml_arbitrator_output"],
+        )
+        cost_breakdown["adjudicator"] = cost_from_tokens("gpt-5.6-terra", input_tokens, output_tokens, is_mock=False)
+        return {
+            "retrieved_evidence": evidence,
+            "verdict": verdict,
+            "adjudicator_triggered": True,
+            "cost_breakdown": cost_breakdown,
+        }
+    except Exception as e:
+        # Real adjudicator call failed -- don't lose the whole item and the
+        # critic spend already made on it. Not setting "verdict" here lets
+        # assemble_verdict_node's existing fallback build an ML-only verdict.
+        print(f"  adjudicator call failed, falling back to ML-only verdict: {e}")
+        cost_breakdown["adjudicator"] = 0.0
+        return {
+            "retrieved_evidence": evidence,
+            "adjudicator_triggered": True,
+            "cost_breakdown": cost_breakdown,
+        }
 
 
 def trace_hallucinations_node(state: ArbitrationState) -> dict:
