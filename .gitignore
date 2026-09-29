@@ -10,6 +10,7 @@ benchmark_data/
 results/processed/
 results/plots/
 results/analysis/
+results/coverage/
 models/
 *.pkl
 
