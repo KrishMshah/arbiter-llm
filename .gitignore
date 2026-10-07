@@ -11,6 +11,7 @@ results/processed/
 results/plots/
 results/analysis/
 results/coverage/
+results/final/
 models/
 *.pkl
 
