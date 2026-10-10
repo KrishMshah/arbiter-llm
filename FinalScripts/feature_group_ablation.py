@@ -85,6 +85,11 @@ def linear_on(col):
     return fp
 
 
+L_CRIT_TASK = f"XGBoost: critic-signal + task type ({N_CRITIC_SIGNAL + N_TASK})"
+L_DIS_TASK = f"XGBoost: disagreement + task type ({N_DISAGREEMENT + N_TASK})"
+L_ALL = f"XGBoost: all {N_FEATURES} features"
+
+
 def main():
     plt = setup_style()
     df, items, by_id = build_dataset()
@@ -105,11 +110,11 @@ def main():
         (f"Linear on {CRITIC_LABEL['critic_b']} alone", "baseline", linear_on("mean_critic_b")),
         (f"Linear on {CRITIC_LABEL['critic_c']} alone", "baseline", linear_on("mean_critic_c")),
         ("XGBoost: task type only", "model", xgb_cond(TASK_FEATURES)),
-        ("XGBoost: disagreement features only (9)", "model", xgb_cond(DISAGREEMENT_FEATURES)),
-        ("XGBoost: critic-signal features only (6)", "model", xgb_cond(CRITIC_SIGNAL_FEATURES)),
-        ("XGBoost: critic-signal + task type (10)", "model", xgb_cond(CRITIC_SIGNAL_FEATURES + TASK_FEATURES)),
-        ("XGBoost: disagreement + task type (13)", "model", xgb_cond(DISAGREEMENT_FEATURES + TASK_FEATURES)),
-        ("XGBoost: all 19 features", "model", xgb_cond(FEATURE_NAMES)),
+        (f"XGBoost: disagreement features only ({N_DISAGREEMENT})", "model", xgb_cond(DISAGREEMENT_FEATURES)),
+        (f"XGBoost: critic-signal features only ({N_CRITIC_SIGNAL})", "model", xgb_cond(CRITIC_SIGNAL_FEATURES)),
+        (f"XGBoost: critic-signal + task type ({N_CRITIC_SIGNAL + N_TASK})", "model", xgb_cond(CRITIC_SIGNAL_FEATURES + TASK_FEATURES)),
+        (f"XGBoost: disagreement + task type ({N_DISAGREEMENT + N_TASK})", "model", xgb_cond(DISAGREEMENT_FEATURES + TASK_FEATURES)),
+        (f"XGBoost: all {N_FEATURES} features", "model", xgb_cond(FEATURE_NAMES)),
     ]
 
     y = df["y"].values
@@ -126,21 +131,21 @@ def main():
     res = pd.DataFrame(results)
 
     # ---- paired differences that matter for the claim --------------------
-    all19 = per_item_err["XGBoost: all 19 features"]
+    all_feat = per_item_err[L_ALL]
     pairs = [
-        ("All 19 vs critic-signal + task (adds disagreement features)", "XGBoost: critic-signal + task type (10)"),
-        ("All 19 vs disagreement + task (adds critic-signal features)", "XGBoost: disagreement + task type (13)"),
-        ("All 19 vs median per dataset", "Predict median per dataset (uses dataset label)"),
-        ("All 19 vs linear on mean critic score", "Linear on mean score of all critics"),
-        ("All 19 vs task type only", "XGBoost: task type only"),
+        (f"All {N_FEATURES} vs critic-signal + task (adds disagreement features)", L_CRIT_TASK),
+        (f"All {N_FEATURES} vs disagreement + task (adds critic-signal features)", L_DIS_TASK),
+        (f"All {N_FEATURES} vs median per dataset", "Predict median per dataset (uses dataset label)"),
+        (f"All {N_FEATURES} vs linear on mean critic score", "Linear on mean score of all critics"),
+        (f"All {N_FEATURES} vs task type only", "XGBoost: task type only"),
         ("Disagreement + task vs task type only", None),
     ]
     diffs = []
     for name, other in pairs:
         if other is None:
-            a, b = per_item_err["XGBoost: disagreement + task type (13)"], per_item_err["XGBoost: task type only"]
+            a, b = per_item_err[L_DIS_TASK], per_item_err["XGBoost: task type only"]
         else:
-            a, b = all19, per_item_err[other]
+            a, b = all_feat, per_item_err[other]
         d, lo, hi = paired_bootstrap_diff(a, b)
         diffs.append({"comparison": name, "mae_difference": d, "ci_lo": lo, "ci_hi": hi,
                       "reading": "negative = first is better"})
@@ -150,9 +155,9 @@ def main():
     # ---- per-dataset MAE and within-dataset rank correlation -----------------
     key = ["Predict median per dataset (uses dataset label)",
            "Linear on mean score of all critics",
-           "XGBoost: critic-signal + task type (10)",
-           "XGBoost: disagreement + task type (13)",
-           "XGBoost: all 19 features"]
+           L_CRIT_TASK,
+           L_DIS_TASK,
+           L_ALL]
     rows = []
     for ds in DATASET_LABEL:
         mask = (df["dataset"] == ds).values
@@ -195,9 +200,9 @@ def main():
     short = {
         "Predict median per dataset (uses dataset label)": "Median per dataset",
         "Linear on mean score of all critics": "Mean critic score",
-        "XGBoost: critic-signal + task type (10)": "Critic-signal + task",
-        "XGBoost: disagreement + task type (13)": "Disagreement + task",
-        "XGBoost: all 19 features": "All 19 features",
+        L_CRIT_TASK: "Critic-signal + task",
+        L_DIS_TASK: "Disagreement + task",
+        L_ALL: f"All {N_FEATURES} features",
     }
     for ax, ds in zip(axes, DATASET_LABEL):
         sub = per_ds[per_ds["dataset"] == ds].set_index("condition").loc[key]

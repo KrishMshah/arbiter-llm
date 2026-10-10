@@ -114,7 +114,7 @@ def main():
         ("Average + task type (XGBoost)", xgb_cond(["pool_mean"] + TASK_FEATURES)),
     ]
     err, meanpred, rows = {}, {}, []
-    for label, col in rules + fair + [("Learned arbitrator (XGBoost, 19 features)", None)]:
+    for label, col in rules + fair + [(f"Learned arbitrator (XGBoost, {N_FEATURES} features)", None)]:
         if col is None:
             fp = xgb_cond(FEATURE_NAMES)
         elif callable(col):
@@ -129,7 +129,7 @@ def main():
         print(f"  {label:62s} MAE {e.mean():.3f} [{lo:.3f}, {hi:.3f}]")
     res = pd.DataFrame(rows)
 
-    learned = "Learned arbitrator (XGBoost, 19 features)"
+    learned = f"Learned arbitrator (XGBoost, {N_FEATURES} features)"
     drows = []
     for label, _ in rules + fair:
         d, lo, hi = paired_bootstrap_diff(err[learned], err[label])

@@ -26,7 +26,13 @@ if str(ROOT) not in sys.path:
 
 PROCESSED = ROOT / "results" / "processed"
 ANALYSIS = ROOT / "results" / "analysis"
-FINAL = ROOT / "results" / "final"
+# Two features (disagreement_type_issue_miss, disagreement_type_false_positive) are computed from the
+# HUMAN labels (TruthfulQA truthful flag, FActScore hallucination spans), so they leak the target.
+# Default: they are DROPPED (17 label-free features) and everything is written to results/final.
+# To reproduce the old 19-feature numbers set ARBITER_LABEL_FREE=0; those go to results/final_leaky_19features.
+LABEL_FREE = os.environ.get("ARBITER_LABEL_FREE", "1") != "0"
+LEAKY_FEATURES = ["disagreement_type_issue_miss", "disagreement_type_false_positive"]
+FINAL = ROOT / "results" / ("final" if LABEL_FREE else "final_leaky_19features")
 PLOTS = FINAL / "plots"
 TABLES = FINAL / "tables"
 for _d in (PLOTS, TABLES):
@@ -60,6 +66,15 @@ TASK_FEATURES = [
     "task_type_factual_qa", "task_type_summarisation",
     "task_type_reasoning", "task_type_creative",
 ]
+if LABEL_FREE:
+    FEATURE_NAMES = [f for f in FEATURE_NAMES if f not in LEAKY_FEATURES]
+    DISAGREEMENT_FEATURES = [f for f in DISAGREEMENT_FEATURES if f not in LEAKY_FEATURES]
+
+# feature counts, used in plot/table labels so they never go stale
+N_FEATURES = len(FEATURE_NAMES)
+N_DISAGREEMENT = len(DISAGREEMENT_FEATURES)
+N_CRITIC_SIGNAL = len(CRITIC_SIGNAL_FEATURES)
+N_TASK = len(TASK_FEATURES)
 
 # Per-critic cost per item, measured from API-reported token usage on the
 # 260-item arena run (the 779-item run only has text-reconstructed estimates,
@@ -97,7 +112,7 @@ def load_combined():
 
 
 def build_dataset():
-    """One row per labelled item: 19 stored features, label, dataset, and
+    """One row per labelled item: the stored features (17 label-free by default), label, dataset, and
     pointers back to the full record (critiques, trace, benchmark item)."""
     items = load_sample_items()
     records = load_combined()
